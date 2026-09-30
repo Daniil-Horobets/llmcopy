@@ -1,0 +1,11 @@
+# Only what is needed to use and understand llmcopy is published; everything else stays local.
+/*
+!/.gitignore
+!/LICENSE
+!/README.md
+!/LLMS.md
+!/llmcopy.py
+!/pyproject.toml
+!/screenshot.png
+!/tests/
+__pycache__/

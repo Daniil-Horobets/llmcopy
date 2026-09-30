@@ -1,0 +1,22 @@
+[build-system]
+requires = ["flit_core>=3.12,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "llmcopy"
+dynamic = ["version"]
+description = "Pick project files in a terminal tree and copy them to the clipboard for an AI chatbot: token counts, sane defaults, no dependencies."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+keywords = ["llm", "chatgpt", "claude", "clipboard", "prompt", "tui", "tokens"]
+
+[project.urls]
+Source = "https://github.com/Daniil-Horobets/llmcopy"
+
+[project.scripts]
+llmcopy = "llmcopy:main"
+
+[tool.flit.sdist]
+include = ["LLMS.md", "screenshot.png", "tests/*.py"]
