@@ -152,6 +152,58 @@ def test_wheel_scrolls(git_project, monkeypatch):
     assert ui.top <= ui.cursor_index() < ui.top + ui.body_height()
 
 
+def thumb_lines(ui):
+    """Tree-area lines whose last column shows the scrollbar thumb."""
+    lines = screen(ui)
+    assert all(llmcopy._width(line) <= ui.size[0] for line in lines)
+    assert "▐" not in lines[0] + "".join(line[:-1] for line in lines[1:])  # nowhere but in the last column
+    return [y for y, line in enumerate(lines[1:-2]) if line.endswith("▐")]
+
+
+def test_scrollbar_appears_when_the_tree_does_not_fit(git_project, monkeypatch):
+    ui = make_ui(git_project, monkeypatch, size=(80, 30))
+    assert ui.thumb() is None and thumb_lines(ui) == []  # everything is on screen: no scrollbar
+    for width in (24, 59, 60, 80):
+        ui = make_ui(git_project, monkeypatch, size=(width, 9))
+        at_top = thumb_lines(ui)
+        h, n = ui.body_height(), len(ui.rows)
+        assert n > h == 6
+        assert at_top and at_top[0] == 0 and len(at_top) == max(1, round(h * h / n)) < h
+        ui.handle(("wheel", 1, 5, 5))
+        moved = thumb_lines(ui)
+        assert moved[0] > 0 and moved[-1] < h - 1  # it touches an end only when the list is at that end
+        ui.handle(("key", "end"))
+        assert thumb_lines(ui)[-1] == h - 1 and ui.top == n - h
+        ui.handle(("key", "home"))
+        assert thumb_lines(ui) == at_top
+        assert "\x1b[7m" not in ui.frame()[1].rsplit("▐", 1)[1]  # the cursor bar ends before the scrollbar
+
+
+def test_scrollbar_click_and_drag(git_project, monkeypatch):
+    ui = make_ui(git_project, monkeypatch, size=(80, 9))
+    before = selected(ui.m)
+    assert thumb_lines(ui)[0] == 0
+    h, last = ui.body_height(), len(ui.rows) - ui.body_height()
+    ui.handle(("click", 79, 1))  # on the thumb: taken, nothing moves yet
+    assert ui.top == 0 and ui.grab == 0
+    tops = []
+    for y in range(1, 1 + h):  # dragged down to the last line of the tree
+        ui.handle(("drag", 79, y))
+        tops.append(ui.top)
+        assert ui.top <= ui.cursor_index() < ui.top + h  # the cursor stays on screen
+    assert tops == sorted(tops) and tops[0] == 0 and tops[-1] == last
+    ui.handle(("drag", 40, 0))  # the pointer may leave the column, and the tree area
+    assert ui.top == 0
+    ui.handle(("click", 78, h))  # below the thumb, one cell beside the column: the thumb's middle jumps there
+    assert ui.top == last and thumb_lines(ui)[-1] == h - 1
+    ui.handle(("click", 79, 1))
+    assert ui.top == 0
+    assert selected(ui.m) == before  # none of this ticked anything
+    ui.handle(("click", 2, 1))  # a click elsewhere (the root's box) lets go of the scrollbar
+    ui.handle(("drag", 2, 6))
+    assert ui.grab is None and ui.top == 0 and selected(ui.m) == []
+
+
 def test_over_budget_focuses_the_heaviest_folder(tmp_path, monkeypatch):
     root = str(tmp_path / "p").replace("\\", "/")
     from conftest import write

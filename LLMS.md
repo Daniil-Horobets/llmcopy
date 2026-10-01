@@ -57,11 +57,15 @@ rather than copying silently.
   a bar showing the share of the budget.
 - Status line: details of the entry under the cursor, or the last message, or the filter being typed.
 - Hint line: the keys. Each hint is also a button. It shortens itself in narrow terminals.
+- Scrollbar: only while the tree is longer than the screen, a dim thumb (`▐`) in the last column. Its length is
+  the share of the rows on screen, its place is where they are in the list; it touches the top or the bottom only
+  when the list is at that end. It uses the column every row leaves blank, so nothing shifts when it comes or goes.
+  Dragging it scrolls; a click above or below it brings its middle to that line. The column next to it counts too.
 - Layout adapts from 24 columns upwards; columns are dropped, nothing wraps.
 
 | key | mouse | action |
 |---|---|---|
-| up / down, `k` / `j`, PgUp / PgDn, Home / End | wheel | move |
+| up / down, `k` / `j`, PgUp / PgDn, Home / End | wheel, scrollbar | move |
 | space | click a checkbox, or a file row | select / unselect a file or a whole folder |
 | right / left, `l` / `h`, Tab | click a folder name | unfold / fold (left on a file jumps to its folder) |
 | enter, `c` | click `enter copy` | copy the selection and quit |
@@ -179,13 +183,13 @@ Each file's count includes about ten tokens for its `<file>` wrapper and tree li
 |---|---|---|
 | Windows: Windows Terminal, PowerShell, cmd, VS Code, Git Bash, classic console window | console input records (`ReadConsoleInputW`): keys, mouse, resize | native clipboard API through ctypes |
 | Git Bash without ConPTY (older Git for Windows) | no console there: llmcopy restarts itself under `winpty` if it is on PATH | same |
-| macOS | termios raw mode, xterm mouse reports (SGR 1006) | `pbcopy` |
+| macOS | termios raw mode, xterm mouse reports (SGR 1006; with 1002, moves while a button is held) | `pbcopy` |
 | Linux | same as macOS | `wl-copy`, `xclip` or `xsel`; on a desktop without them it says which to install and writes a temporary file |
 | WSL | same as Linux | `clip.exe` |
 | remote shell without a display | same as Linux | asks the terminal with OSC 52 and says so |
 | Cygwin / MSYS Python | same as Linux | `/dev/clipboard` |
 
-Only glyphs that every Windows console font has are used (`► ▼ █ ▌ ░ … ·`). Colours are the 16 ANSI colours plus
+Only glyphs that every Windows console font has are used (`► ▼ █ ▌ ▐ ░ … ·`). Colours are the 16 ANSI colours plus
 bold, dim and reverse; `NO_COLOR` drops the hues. The terminal state is restored on exit, on Ctrl+C and on
 SIGTERM/SIGHUP.
 
@@ -254,12 +258,20 @@ are the ignored entries); `_apply_tok` stores a measurement; `toggle`, `set_dir`
 
 `UI`: `build_rows` flattens the visible tree; `frame()` returns the screen as a list of lines, `draw()` writes the
 changed ones; `auto_expand` and `focus_heavy` choose what is unfolded; `act(name)` performs a command; `on_key`,
-`on_char`, `on_click`, `on_wheel` translate input; `settle()` runs once when the scan is complete; `run()` is the
-loop. A terminal object has `read(timeout) -> events`, `wake()`, `close()` and the strings `on` / `off`; events are
-`("key", name)`, `("char", c)`, `("click", x, y)`, `("wheel", ±1, x, y)`, `("resize",)`.
+`on_char`, `on_click`, `on_drag`, `on_wheel` translate input; `settle()` runs once when the scan is complete;
+`run()` is the loop. A terminal object has `read(timeout) -> events`, `wake()`, `close()` and the strings `on` /
+`off`; events are `("key", name)`, `("char", c)`, `("click", x, y)`, `("drag", x, y)` (the pointer moved with the
+left button held), `("wheel", ±1, x, y)`, `("resize",)`.
+
+Scrolling: `top` is the first row on screen and `scroll(top)` is the one place that moves it (the cursor comes
+along when it would be left behind); the wheel and the scrollbar both end there. `thumb()` gives the scrollbar as
+`(start, length, last start)` in lines of the tree area, a few integer operations on `top`, the height and the row
+count, and `None` when everything fits. `frame()` hands each row its cell of it; `on_click` and `on_drag` use the
+same numbers backwards, so the thumb stays under the pointer (`grab` is the line of the thumb that is held).
 
 Tests: `python -m pytest` (`tests/`): selection logic in git and plain folders, rules round trip, output, secrets,
-the interface driven without a terminal, line widths from 24 to 160 columns, clipboard tools.
+the interface driven without a terminal, the scrollbar, line widths from 24 to 160 columns, mouse reports,
+clipboard tools.
 
 ## Limits
 

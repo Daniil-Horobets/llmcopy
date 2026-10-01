@@ -64,6 +64,17 @@ def test_formatting():
     assert llmcopy._bar(0.01, 8) == " " * 8
 
 
+def test_posix_mouse_reports():
+    term = object.__new__(llmcopy._PosixTerm)  # the parser alone: no terminal needed
+    term.pending = (b"\x1b[<0;80;3M" b"\x1b[<32;80;5M" b"\x1b[<0;80;5m"  # left button: press, move while held, release
+                    b"\x1b[<65;4;2M" b"\x1b[<64;4;2M"  # wheel down, up
+                    b"\x1b[<2;9;9M" b"\x1b[<34;9;8M")  # the right button does nothing, held and moved neither
+    events = []
+    term._parse(events)
+    assert events == [("click", 79, 2), ("drag", 79, 4), ("wheel", 1, 3, 1), ("wheel", -1, 3, 1)]
+    assert "\x1b[?1002h" in term.on and "\x1b[?1002l" in term.off  # moves are reported only while a button is held
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX clipboard tools")
 @pytest.mark.parametrize("platform,tool,env", [
     ("darwin", "pbcopy", {}),

@@ -13,7 +13,7 @@ try:
 except ImportError:
     from collections import deque
 
-__version__ = "2.0.1"
+__version__ = "2.1.0"
 
 _T0 = perf_counter()
 DEFAULT_BUDGET = 100_000
@@ -1140,7 +1140,8 @@ def copy_to_clipboard(text):
 
 
 # -- terminal: raw keyboard + mouse input ------------------------------------------------
-# read() returns events: ("key", name) | ("char", c) | ("click", x, y) | ("wheel", +1/-1, x, y) | ("resize",)
+# read() returns events: ("key", name) | ("char", c) | ("click", x, y) | ("drag", x, y) | ("wheel", +1/-1, x, y)
+# | ("resize",). A drag is the pointer moving with the left button held.
 
 
 class _WinTerm:
@@ -1238,6 +1239,8 @@ class _WinTerm:
                     if down and not self.left_down:
                         events.append(("click", m.pos.X, m.pos.Y))
                     self.left_down = down
+                elif m.flags & 1 and m.buttons & 1 and self.left_down:
+                    events.append(("drag", m.pos.X, m.pos.Y))
             elif r.type == 4:
                 events.append(("resize",))
         return events
@@ -1249,8 +1252,8 @@ class _PosixTerm:
     _CSI = {b"A": "up", b"B": "down", b"C": "right", b"D": "left", b"H": "home", b"F": "end", b"5~": "pgup",
             b"6~": "pgdn", b"1~": "home", b"7~": "home", b"4~": "end", b"8~": "end"}
     _CTRL = {0x0D: "enter", 0x0A: "enter", 0x7F: "backspace", 0x08: "backspace", 0x09: "tab", 0x03: "ctrl-c", 0x20: "space"}
-    on = "\x1b[?1000h\x1b[?1006h"
-    off = "\x1b[?1006l\x1b[?1000l"
+    on = "\x1b[?1000h\x1b[?1002h\x1b[?1006h"  # presses, and moves while a button is held
+    off = "\x1b[?1006l\x1b[?1002l\x1b[?1000l"
 
     def __init__(self):
         import select
@@ -1351,8 +1354,8 @@ class _PosixTerm:
                         continue
                     if b & 64:
                         events.append(("wheel", 1 if b & 1 else -1, x - 1, y - 1))
-                    elif b & 3 == 0 and not b & 32 and seq[-1:] == b"M":
-                        events.append(("click", x - 1, y - 1))
+                    elif b & 3 == 0 and seq[-1:] == b"M":  # the left button: pressed, or moved while held
+                        events.append(("drag" if b & 32 else "click", x - 1, y - 1))
                     continue
                 name = self._CSI.get(seq) or self._CSI.get(seq[-1:])
                 if name:
@@ -1519,6 +1522,7 @@ class UI:
         self.prev = []
         self.size = (0, 0)
         self.hints = []  # clickable footer regions: (x0, x1, action)
+        self.grab = None  # while the scrollbar is dragged: the line of its thumb the pointer holds
         self.meter_x = 0
         self.dirty = True
         self.last_draw = 0.0
@@ -1585,6 +1589,19 @@ class UI:
 
     def body_height(self):
         return max(1, self.size[1] - self.HEAD - self.FOOT)
+
+    def thumb(self):
+        """The scrollbar, in lines of the tree area: (where its thumb starts, the thumb's length, the
+        last line it can start on). None while every row is on screen."""
+        h, n = self.body_height(), len(self.rows)
+        if n <= h or h < 2:
+            return None
+        size = max(1, (h * h + n // 2) // n)
+        span, last = h - size, n - h
+        pos = (self.top * span + last // 2) // last
+        if span > 1:  # it touches an end only when the list is at that end
+            pos = min(max(pos, self.top > 0), span - (self.top < last))
+        return pos, size, span
 
     def _fold_all(self):
         stack = [self.m.root]
@@ -1664,8 +1681,12 @@ class UI:
         self.top = max(0, min(self.top, cur, len(self.rows) - h))
         denom = max(self.budget, m.root.tsel, 1)
         lines = [self._header(W)]
+        pos, size, _ = self.thumb() or (0, 0, 0)
+        gap, mark = (" ", self.s("2", "▐")) if size else ("", "")  # the scrollbar: the last column, otherwise blank
+        first, stop = self.top + pos, self.top + pos + size
         for i in range(self.top, self.top + h):
-            lines.append(self._row(self.rows[i], W, i == cur, denom) if i < len(self.rows) else "")
+            edge = mark if first <= i < stop else gap
+            lines.append(self._row(self.rows[i], W, i == cur, denom, edge) if i < len(self.rows) else "")
         lines.append(self._status(W))
         lines.append(self._hints(W))
         return lines[:H]
@@ -1705,8 +1726,9 @@ class UI:
         self.meter_x = _width(left) + gap
         return self.s("1", left) + " " * gap + "  ".join(self.s(c, t) for c, t in parts) + " "
 
-    def _row(self, n, W, is_cur, denom):
-        """One tree line: checkbox, indented name, [what it is], tokens, share-of-budget bar."""
+    def _row(self, n, W, is_cur, denom, edge=""):
+        """One tree line: checkbox, indented name, [what it is], tokens, share-of-budget bar. `edge` is
+        the scrollbar's cell; it takes the place of the last column, which is blank."""
         is_dir = n.kids is not None
         info = ""
         if is_dir:
@@ -1761,13 +1783,14 @@ class UI:
         info_cell = info + "  " if info_w else ""
         bar = _bar(tok / denom, 8) if (wide and chosen and tok) else " " * 8
         if is_cur:
-            return self.s("7", lead + name + pad + info_cell + tok_s.rjust(7) + " " + (bar + " " if wide else ""))
+            line = lead + name + pad + info_cell + tok_s.rjust(7) + (" " + bar if wide else "")
+            return self.s("7", line) + edge if edge else self.s("7", line + " ")
         s = self.s
         warn = n.why == "secret" or (is_dir and n.nheld and folded)
         return (" " + s("32" if box == "[x]" else "33" if box == "[-]" else "2", box) + " " + "  " * n.depth
                 + s("2", arrow) + " " + s(("1" if is_dir else "") if chosen else "2", name) + pad
-                + s("33" if warn else "2", info_cell) + s("" if chosen else "2", tok_s.rjust(7)) + " "
-                + (s("36", bar) + " " if wide else ""))
+                + s("33" if warn else "2", info_cell) + s("" if chosen else "2", tok_s.rjust(7))
+                + (" " + s("36", bar) if wide else "") + (edge or " "))
 
     def _status(self, W):
         s = self.s
@@ -1960,7 +1983,13 @@ class UI:
         W, H = self.size
         self.msg = ""
         i = self.top + y - self.HEAD
-        if y == H - 1:
+        bar = self.thumb()
+        self.grab = None
+        if bar and x >= W - 2 and self.HEAD <= y < H - self.FOOT:  # the scrollbar, or right beside it: it is thin
+            line = y - self.HEAD - bar[0]
+            self.grab = line if 0 <= line < bar[1] else bar[1] // 2  # taken where it was hit, else by its middle
+            self.on_drag(y)
+        elif y == H - 1:
             for x0, x1, action in self.hints:
                 if x0 <= x < x1:
                     self.act(action)
@@ -1974,9 +2003,23 @@ class UI:
             elif n.parent is not None and not self.filter:
                 self.fold(n, not n.open)
 
+    def on_drag(self, y):
+        """The scrollbar's thumb follows the pointer."""
+        bar = self.thumb()
+        if self.grab is None or not bar:
+            return
+        pos, _, span = bar
+        want = max(0, min(span, y - self.HEAD - self.grab))
+        if want != pos:
+            self.scroll((want * (len(self.rows) - self.body_height()) + span // 2) // span)
+
     def on_wheel(self, d):
+        self.scroll(self.top + 3 * d)
+
+    def scroll(self, top):
+        """Show the rows from `top` on; the cursor comes along when it would be left behind."""
         h = self.body_height()
-        self.top = max(0, min(self.top + 3 * d, len(self.rows) - h))
+        self.top = max(0, min(top, len(self.rows) - h))
         i = self.cursor_index()
         if not self.top <= i < self.top + h:
             self.cur = self.rows[self.top if i < self.top else self.top + h - 1]
@@ -1985,6 +2028,8 @@ class UI:
         kind = ev[0]
         if kind == "wheel":
             self.on_wheel(ev[1])
+        elif kind == "drag":
+            self.on_drag(ev[2])
         elif kind != "resize":
             self.touched = True
             if kind == "key":
@@ -2090,7 +2135,7 @@ paste into ChatGPT, Claude, Gemini or any other AI chat.
 
 keys:  up/down move    left/right fold    space select    a all/none    enter copy
        / filter    t sort by size    i hide/show ignored    b budget    s save default    q quit
-mouse: click a box or a file to select, a folder to fold, the wheel to scroll
+mouse: click a box or a file to select, a folder to fold; wheel or scrollbar to scroll
 """
 
 

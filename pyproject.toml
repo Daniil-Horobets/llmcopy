@@ -19,4 +19,4 @@ Source = "https://github.com/Daniil-Horobets/llmcopy"
 llmcopy = "llmcopy:main"
 
 [tool.flit.sdist]
-include = ["LLMS.md", "screenshot.png", "tests/*.py"]
+include = ["LLMS.md", "demo.gif", "tests/*.py"]
