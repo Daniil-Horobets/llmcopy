@@ -1,33 +1,57 @@
 name: Publish to PyPI
 
+# Every push to main publishes a new version: PyPI's latest plus a patch bump, or a minor/major
+# bump if a commit message in the push contains [minor] / [major]. See .github/scripts/next_version.py.
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency: publish
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: write  # commit the bumped version, tag it, create the GitHub release
+      id-token: write  # PyPI trusted publishing
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install build
-      - run: python -m build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/
 
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
+      - name: Test
+        run: |
+          python -m pip install pytest
+          python -m pytest -q
+
+      - name: Pick the version
+        id: version
+        env:
+          COMMIT_MESSAGES: ${{ toJSON(github.event.commits.*.message) }}
+        run: echo "number=$(python .github/scripts/next_version.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: |
+          python -m pip install build
+          python -m build
+
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Commit the version, tag it, create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.number }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet llmcopy.py; then
+            git commit -m "Bump version to $VERSION [skip ci]" llmcopy.py
+            git pull --rebase
+            git push
+          fi
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" dist/*.whl dist/*.tar.gz --title "v$VERSION" --generate-notes
