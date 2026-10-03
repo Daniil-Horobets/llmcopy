@@ -3,6 +3,9 @@
 ```sh
 pipx install llmcopy
 ```
+
+or
+
 ```sh
 uv tool install llmcopy
 ```
