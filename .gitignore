@@ -8,4 +8,5 @@
 !/pyproject.toml
 !/demo.gif
 !/tests/
+!/.github/
 __pycache__/
