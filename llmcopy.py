@@ -13,7 +13,7 @@ try:
 except ImportError:
     from collections import deque
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 
 _T0 = perf_counter()
 DEFAULT_BUDGET = 100_000
